@@ -27,7 +27,8 @@ const DB_PATH = path.join(DATA_DIR, 'app.db')
 const DB_DRIVER = (process.env.DB_DRIVER || 'sqlite').toLowerCase()
 const MYSQL_MASTER_HOST = process.env.MYSQL_MASTER_HOST || process.env.MYSQL_HOST || '127.0.0.1'
 const MYSQL_SLAVE_HOST = process.env.MYSQL_SLAVE_HOST || process.env.MYSQL_HOST || '127.0.0.1'
-const MYSQL_PORT = process.env.MYSQL_PORT ? Number(process.env.MYSQL_PORT) : 3306
+const MYSQL_MASTER_PORT = process.env.MYSQL_MASTER_PORT ? Number(process.env.MYSQL_MASTER_PORT) : (process.env.MYSQL_PORT ? Number(process.env.MYSQL_PORT) : 3306)
+const MYSQL_SLAVE_PORT = process.env.MYSQL_SLAVE_PORT ? Number(process.env.MYSQL_SLAVE_PORT) : (process.env.MYSQL_PORT ? Number(process.env.MYSQL_PORT) : 3306)
 const MYSQL_USER = process.env.MYSQL_USER || 'root'
 const MYSQL_PASSWORD = process.env.MYSQL_PASSWORD || ''
 const MYSQL_DATABASE = process.env.MYSQL_DATABASE || 'cloud_app'
@@ -65,7 +66,7 @@ async function initDatabase() {
     // MySQL Master: pool pour les opérations d'écriture
     mysqlMasterPool = await mysql.createPool({
       host: MYSQL_MASTER_HOST,
-      port: MYSQL_PORT,
+      port: MYSQL_MASTER_PORT,
       user: MYSQL_USER,
       password: MYSQL_PASSWORD,
       database: MYSQL_DATABASE,
@@ -75,7 +76,7 @@ async function initDatabase() {
     // MySQL Slave: pool pour les opérations de lecture
     mysqlSlavePool = await mysql.createPool({
       host: MYSQL_SLAVE_HOST,
-      port: MYSQL_PORT,
+      port: MYSQL_SLAVE_PORT,
       user: MYSQL_USER,
       password: MYSQL_PASSWORD,
       database: MYSQL_DATABASE,
@@ -92,7 +93,7 @@ async function initDatabase() {
       ) ENGINE=InnoDB`
     )
     
-    console.log(`✅ MySQL Read/Write Split: Master=${MYSQL_MASTER_HOST}, Slave=${MYSQL_SLAVE_HOST}`)
+    console.log(`✅ MySQL Read/Write Split: Master=${MYSQL_MASTER_HOST}:${MYSQL_MASTER_PORT}, Slave=${MYSQL_SLAVE_HOST}:${MYSQL_SLAVE_PORT}`)
   } else {
     // SQLite: crée le fichier et la table si nécessaire
     sqliteDb = new sqlite3.Database(DB_PATH)
