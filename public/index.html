@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <title>Image Plein Écran - Cloud Project</title>
+    <meta name="description" content="Application web d'affichage d'images en plein écran avec haute disponibilité" />
+    <link rel="stylesheet" href="/style.css?v=2" />
+  </head>
+  <body>
+    <div id="container">
+      <div id="info-bar">
+        <span id="image-name">&nbsp;</span>
+        <span id="server-number">&nbsp;</span>
+        <button id="open-form">Ouvrir le formulaire</button>
+      </div>
+      <div id="image-wrapper">
+        <img id="main-image" alt="Image" />
+        <div id="placeholder">Aucune image disponible</div>
+      </div>
+
+      <dialog id="form-dialog">
+        <form id="upload-form" method="dialog">
+          <h3>Enregistrer une image</h3>
+          <label>
+            Nom
+            <input type="text" name="name" id="name-input" required />
+          </label>
+          <label>
+            Image
+            <input type="file" name="image" id="file-input" accept="image/*" required />
+          </label>
+          <div class="actions">
+            <button type="submit">Enregistrer</button>
+            <button type="button" id="close-form">Fermer</button>
+          </div>
+          <div id="form-error" aria-live="polite"></div>
+        </form>
+      </dialog>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
