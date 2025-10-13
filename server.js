@@ -6,6 +6,7 @@ import os from 'os'
 import sqlite3 from 'sqlite3'
 import mysql from 'mysql2/promise'
 import dotenv from 'dotenv'
+import { Client as MinioClient } from 'minio'
 
 // Charger les variables d'environnement
 dotenv.config()
@@ -19,40 +20,70 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 8000
 const SERVER_NUMBER = process.env.SERVER_NUMBER || '1'
 const ROOT_DIR = path.resolve(process.cwd())
 const PUBLIC_DIR = path.join(ROOT_DIR, 'public')
-const UPLOADS_DIR = path.join(ROOT_DIR, 'uploads')
 const DATA_DIR = path.join(ROOT_DIR, 'data')
 const DB_PATH = path.join(DATA_DIR, 'app.db')
 
 // DB: SQLite par défaut, MySQL optionnel pour HA
 const DB_DRIVER = (process.env.DB_DRIVER || 'sqlite').toLowerCase()
-const MYSQL_HOST = process.env.MYSQL_HOST || '127.0.0.1'
+const MYSQL_MASTER_HOST = process.env.MYSQL_MASTER_HOST || process.env.MYSQL_HOST || '127.0.0.1'
+const MYSQL_SLAVE_HOST = process.env.MYSQL_SLAVE_HOST || process.env.MYSQL_HOST || '127.0.0.1'
 const MYSQL_PORT = process.env.MYSQL_PORT ? Number(process.env.MYSQL_PORT) : 3306
 const MYSQL_USER = process.env.MYSQL_USER || 'root'
 const MYSQL_PASSWORD = process.env.MYSQL_PASSWORD || ''
 const MYSQL_DATABASE = process.env.MYSQL_DATABASE || 'cloud_app'
 
+// MinIO: Configuration pour le stockage objet S3
+const MINIO_ENDPOINT = process.env.MINIO_ENDPOINT || '192.168.64.17'
+const MINIO_PORT = process.env.MINIO_PORT ? Number(process.env.MINIO_PORT) : 9000
+const MINIO_USE_SSL = process.env.MINIO_USE_SSL === 'true'
+const MINIO_ACCESS_KEY = process.env.MINIO_ACCESS_KEY || 'minioadmin'
+const MINIO_SECRET_KEY = process.env.MINIO_SECRET_KEY || 'minio_secure_2024'
+const MINIO_BUCKET = process.env.MINIO_BUCKET || 'uploads'
+
 // S'assurer que les répertoires existent
-for (const dir of [PUBLIC_DIR, UPLOADS_DIR, DATA_DIR]) {
+for (const dir of [PUBLIC_DIR, DATA_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 }
 
-// Base de données (SQLite ou MySQL)
+// Base de données (SQLite ou MySQL avec read/write split)
 sqlite3.verbose()
 let sqliteDb = null
-let mysqlPool = null
+let mysqlMasterPool = null  // Pour les écritures (INSERT, UPDATE, DELETE)
+let mysqlSlavePool = null   // Pour les lectures (SELECT)
+
+// Client MinIO pour le stockage objet
+const minioClient = new MinioClient({
+  endPoint: MINIO_ENDPOINT,
+  port: MINIO_PORT,
+  useSSL: MINIO_USE_SSL,
+  accessKey: MINIO_ACCESS_KEY,
+  secretKey: MINIO_SECRET_KEY,
+})
 
 async function initDatabase() {
   if (DB_DRIVER === 'mysql') {
-    // MySQL: crée un pool et s'assure que la table existe
-    mysqlPool = await mysql.createPool({
-      host: MYSQL_HOST,
+    // MySQL Master: pool pour les opérations d'écriture
+    mysqlMasterPool = await mysql.createPool({
+      host: MYSQL_MASTER_HOST,
       port: MYSQL_PORT,
       user: MYSQL_USER,
       password: MYSQL_PASSWORD,
       database: MYSQL_DATABASE,
       connectionLimit: 5,
     })
-    await mysqlPool.query(
+    
+    // MySQL Slave: pool pour les opérations de lecture
+    mysqlSlavePool = await mysql.createPool({
+      host: MYSQL_SLAVE_HOST,
+      port: MYSQL_PORT,
+      user: MYSQL_USER,
+      password: MYSQL_PASSWORD,
+      database: MYSQL_DATABASE,
+      connectionLimit: 10,  // Plus de connexions pour les lectures
+    })
+    
+    // Créer la table sur le master (sera répliquée sur le slave)
+    await mysqlMasterPool.query(
       `CREATE TABLE IF NOT EXISTS images (
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
@@ -60,6 +91,8 @@ async function initDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       ) ENGINE=InnoDB`
     )
+    
+    console.log(`✅ MySQL Read/Write Split: Master=${MYSQL_MASTER_HOST}, Slave=${MYSQL_SLAVE_HOST}`)
   } else {
     // SQLite: crée le fichier et la table si nécessaire
     sqliteDb = new sqlite3.Database(DB_PATH)
@@ -78,7 +111,8 @@ async function initDatabase() {
 
 async function insertImageRecord(name, relativePath) {
   if (DB_DRIVER === 'mysql') {
-    const [result] = await mysqlPool.execute(
+    // Écriture: utilise le master
+    const [result] = await mysqlMasterPool.execute(
       'INSERT INTO images (name, image_path) VALUES (?, ?)',
       [name, relativePath]
     )
@@ -98,10 +132,20 @@ async function insertImageRecord(name, relativePath) {
 
 async function selectLatestImage() {
   if (DB_DRIVER === 'mysql') {
-    const [rows] = await mysqlPool.query(
-      'SELECT id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT 1'
-    )
-    return rows[0] || null
+    // Lecture: utilise le slave, avec fallback sur master si slave down
+    try {
+      const [rows] = await mysqlSlavePool.query(
+        'SELECT id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT 1'
+      )
+      return rows[0] || null
+    } catch (err) {
+      // Fallback: si le slave est down, utilise le master
+      console.warn('⚠️  Slave DB down, using master for reads')
+      const [rows] = await mysqlMasterPool.query(
+        'SELECT id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT 1'
+      )
+      return rows[0] || null
+    }
   }
   return await new Promise((resolve, reject) => {
     sqliteDb.get(
@@ -114,17 +158,8 @@ async function selectLatestImage() {
   })
 }
 
-// Multer pour la gestion des uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, UPLOADS_DIR)
-  },
-  filename: (req, file, cb) => {
-    const time = Date.now()
-    const safeOriginal = file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_')
-    cb(null, `${time}-${safeOriginal}`)
-  },
-})
+// Multer pour la gestion des uploads (stockage en mémoire pour MinIO)
+const storage = multer.memoryStorage()
 const upload = multer({ storage })
 
 // En-tête pour exposer le numéro du serveur
@@ -133,8 +168,19 @@ app.use((req, res, next) => {
   next()
 })
 
+// Route proxy pour servir les fichiers depuis MinIO
+app.get('/uploads/:filename', async (req, res) => {
+  try {
+    const fileName = req.params.filename
+    const dataStream = await minioClient.getObject(MINIO_BUCKET, fileName)
+    dataStream.pipe(res)
+  } catch (err) {
+    console.error('Erreur récupération MinIO:', err)
+    res.status(404).send('File not found')
+  }
+})
+
 // Servir les fichiers statiques avec headers no-cache pour CSS
-app.use('/uploads', express.static(UPLOADS_DIR))
 app.use(express.static(PUBLIC_DIR, {
   setHeaders: (res, path) => {
     if (path.endsWith('.css')) {
@@ -163,7 +209,7 @@ app.get('/api/latest', async (req, res) => {
   }
 })
 
-// Route: enregistrer (nom + image)
+// Route: enregistrer (nom + image) avec upload vers MinIO
 app.post('/api/upload', upload.single('image'), async (req, res) => {
   const name = req.body?.name?.trim()
   const file = req.file
@@ -171,15 +217,29 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
   if (!name) return res.status(400).json({ error: 'Le nom est obligatoire' })
   if (!file) return res.status(400).json({ error: 'Le fichier image est obligatoire' })
 
-  // Stocker uniquement le chemin relatif dans la BDD (bonnes pratiques)
-  const relativePath = path.posix.join('uploads', path.basename(file.filename))
-
   try {
-    const id = await insertImageRecord(name, relativePath)
-    const imageUrl = `/${relativePath}`
+    // Générer un nom de fichier unique
+    const time = Date.now()
+    const safeOriginal = file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_')
+    const fileName = `${time}-${safeOriginal}`
+    
+    // Upload vers MinIO
+    await minioClient.putObject(
+      MINIO_BUCKET,
+      fileName,
+      file.buffer,
+      file.size,
+      { 'Content-Type': file.mimetype }
+    )
+    
+    // Stocker le nom du fichier dans la BDD
+    const id = await insertImageRecord(name, fileName)
+    const imageUrl = `/uploads/${fileName}`
+    
     return res.status(201).json({ id, name, imageUrl })
   } catch (err) {
-    return res.status(500).json({ error: 'Erreur base de données' })
+    console.error('Erreur upload MinIO:', err)
+    return res.status(500).json({ error: 'Erreur upload fichier' })
   }
 })
 
@@ -191,7 +251,16 @@ app.get('/api/info', (req, res) => {
 // Endpoint de santé pour le Load Balancer
 app.get('/health', async (req, res) => {
   try {
-    if (DB_DRIVER === 'mysql' && mysqlPool) await mysqlPool.query('SELECT 1')
+    if (DB_DRIVER === 'mysql' && mysqlMasterPool) {
+      // Vérifie le master (critique) et le slave (optionnel)
+      await mysqlMasterPool.query('SELECT 1')
+      // Le slave est optionnel pour la santé, mais on log si down
+      try {
+        await mysqlSlavePool.query('SELECT 1')
+      } catch (err) {
+        console.warn('⚠️  Slave DB unreachable, falling back to master for reads')
+      }
+    }
     res.status(200).send('OK')
   } catch {
     res.status(500).send('DOWN')
@@ -203,6 +272,7 @@ app.listen(PORT, () => {
   const ip = getLocalIp()
   // Affiche l'IP LAN et le numéro du serveur pour les tests
   console.log(`Serveur démarré sur http://${ip}:${PORT} (serveur #${SERVER_NUMBER}, DB=${DB_DRIVER})`)
+  console.log(`📦 Stockage: MinIO (${MINIO_ENDPOINT}:${MINIO_PORT}/${MINIO_BUCKET})`)
 })
 
 // Utilitaire: IP locale (LAN)
