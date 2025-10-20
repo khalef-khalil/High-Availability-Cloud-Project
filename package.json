@@ -6,7 +6,15 @@
   "scripts": {
     "start": "node server.js",
     "dev": "./scripts/dev.sh",
-    "dev:simple": "nodemon server.js"
+    "dev:simple": "nodemon server.js",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:monitor": "playwright test tests/monitor.spec.js",
+    "test:basic": "playwright test tests/01-basic-functionality.spec.js tests/02-upload-functionality.spec.js",
+    "test:ha": "playwright test tests/03-ha-load-balancing.spec.js tests/06-failover-simulation.spec.js",
+    "test:health": "playwright test tests/04-health-monitoring.spec.js",
+    "test:report": "playwright show-report"
   },
   "dependencies": {
     "dotenv": "^17.2.3",
@@ -17,6 +25,8 @@
     "sqlite3": "^5.1.7"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "@playwright/test": "^1.56.1",
+    "nodemon": "^3.1.0",
+    "playwright": "^1.56.1"
   }
 }
