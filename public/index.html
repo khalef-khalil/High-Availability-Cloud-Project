@@ -6,19 +6,50 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <title>Image Plein Écran - Cloud Project</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%233b82f6'/%3E%3Cpath d='M18 40l10-12 8 9 6-7 4 10H18z' fill='white'/%3E%3C/svg%3E" />
     <meta name="description" content="Application web d'affichage d'images en plein écran avec haute disponibilité" />
     <link rel="stylesheet" href="/style.css?v=2" />
   </head>
   <body>
     <div id="container">
       <div id="info-bar">
+        <div id="badges">
+          <span id="server-number">&nbsp;</span>
+          <span id="status-dot" aria-label="status"></span>
+        </div>
         <span id="image-name">&nbsp;</span>
-        <span id="server-number">&nbsp;</span>
-        <button id="open-form">Ouvrir le formulaire</button>
+        <div class="actions-right">
+          <button id="open-form">Ouvrir le formulaire</button>
+        </div>
       </div>
+      <div id="carousel" aria-label="Dernières images">
+        <div id="carousel-track"></div>
+        <button id="carousel-prev" class="icon-btn" aria-label="Précédent">◀</button>
+        <button id="carousel-next" class="icon-btn" aria-label="Suivant">▶</button>
+      </div>
+
       <div id="image-wrapper">
         <img id="main-image" alt="Image" />
         <div id="placeholder">Aucune image disponible</div>
+      </div>
+
+      <div id="list-wrapper">
+        <table id="images-table" aria-label="Liste des images">
+          <thead>
+            <tr>
+              <th>Miniature</th>
+              <th>Nom</th>
+              <th>Date</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="pagination">
+          <button id="prev-page" class="icon-btn" aria-label="Page précédente">◀</button>
+          <span id="page-info"></span>
+          <button id="next-page" class="icon-btn" aria-label="Page suivante">▶</button>
+        </div>
       </div>
 
       <dialog id="form-dialog">

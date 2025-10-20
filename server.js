@@ -51,6 +51,7 @@ sqlite3.verbose()
 let sqliteDb = null
 let mysqlMasterPool = null  // Pour les écritures (INSERT, UPDATE, DELETE)
 let mysqlSlavePool = null   // Pour les lectures (SELECT)
+let lastReadDbSource = 'sqlite' // 'master' | 'slave' | 'sqlite'
 
 // Client MinIO pour le stockage objet
 const minioClient = new MinioClient({
@@ -138,6 +139,7 @@ async function selectLatestImage() {
       const [rows] = await mysqlSlavePool.query(
         'SELECT id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT 1'
       )
+      lastReadDbSource = 'slave'
       return rows[0] || null
     } catch (err) {
       // Fallback: si le slave est down, utilise le master
@@ -145,9 +147,11 @@ async function selectLatestImage() {
       const [rows] = await mysqlMasterPool.query(
         'SELECT id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT 1'
       )
+      lastReadDbSource = 'master'
       return rows[0] || null
     }
   }
+  lastReadDbSource = 'sqlite'
   return await new Promise((resolve, reject) => {
     sqliteDb.get(
       'SELECT id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT 1',
@@ -156,6 +160,69 @@ async function selectLatestImage() {
         resolve(row || null)
       }
     )
+  })
+}
+
+async function selectImagesPaginated(offset, limit) {
+  if (DB_DRIVER === 'mysql') {
+    try {
+      const [rows] = await mysqlSlavePool.query(
+        'SELECT SQL_CALC_FOUND_ROWS id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
+        [Number(limit), Number(offset)]
+      )
+      const [totalRows] = await mysqlSlavePool.query('SELECT FOUND_ROWS() as total')
+      lastReadDbSource = 'slave'
+      return { rows, total: Number(totalRows?.[0]?.total || 0) }
+    } catch (err) {
+      console.warn('⚠️  Slave DB down, using master for reads (paginated)')
+      const [rows] = await mysqlMasterPool.query(
+        'SELECT SQL_CALC_FOUND_ROWS id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
+        [Number(limit), Number(offset)]
+      )
+      const [totalRows] = await mysqlMasterPool.query('SELECT FOUND_ROWS() as total')
+      lastReadDbSource = 'master'
+      return { rows, total: Number(totalRows?.[0]?.total || 0) }
+    }
+  }
+  lastReadDbSource = 'sqlite'
+  return await new Promise((resolve, reject) => {
+    sqliteDb.all(
+      'SELECT id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
+      [Number(limit), Number(offset)],
+      (err, rows) => {
+        if (err) return reject(err)
+        // Approx total for sqlite
+        sqliteDb.get('SELECT COUNT(*) as total FROM images', (e2, totalRow) => {
+          if (e2) return reject(e2)
+          resolve({ rows: rows || [], total: Number(totalRow?.total || 0) })
+        })
+      }
+    )
+  })
+}
+
+async function deleteImage(id) {
+  if (DB_DRIVER === 'mysql') {
+    // Récupérer d'abord le chemin du fichier
+    const [rows] = await mysqlMasterPool.query('SELECT image_path FROM images WHERE id = ?', [id])
+    const fileName = rows?.[0]?.image_path
+    if (!fileName) return false
+    await mysqlMasterPool.query('DELETE FROM images WHERE id = ?', [id])
+    try {
+      await minioClient.removeObject(MINIO_BUCKET, String(fileName))
+    } catch {}
+    return true
+  }
+  return await new Promise((resolve, reject) => {
+    sqliteDb.get('SELECT image_path FROM images WHERE id = ?', [id], async (err, row) => {
+      if (err) return reject(err)
+      if (!row) return resolve(false)
+      sqliteDb.run('DELETE FROM images WHERE id = ?', [id], async (e2) => {
+        if (e2) return reject(e2)
+        try { await minioClient.removeObject(MINIO_BUCKET, String(row.image_path)) } catch {}
+        resolve(true)
+      })
+    })
   })
 }
 
@@ -200,13 +267,66 @@ app.get('/api/latest', async (req, res) => {
   try {
     const row = await selectLatestImage()
     if (!row) return res.json({ item: null, serverNumber: SERVER_NUMBER })
-    const imageUrl = `/${String(row.image_path).replace(/^\/+/, '')}`
+    // Toujours servir les fichiers via la route proxy /uploads/<filename>
+    const sanitizedPath = String(row.image_path).replace(/^\/+/, '')
+    const imageUrl = `/uploads/${sanitizedPath}`
+    res.setHeader('X-DB-Source', lastReadDbSource)
     return res.json({
       item: { id: row.id, name: row.name, imageUrl, createdAt: row.created_at },
       serverNumber: SERVER_NUMBER,
+      dbSource: lastReadDbSource,
     })
   } catch (err) {
     return res.status(500).json({ error: 'Erreur base de données' })
+  }
+})
+
+// Dernières 5 images pour le carrousel
+app.get('/api/latest-5', async (req, res) => {
+  try {
+    const { rows, total } = await selectImagesPaginated(0, 5)
+    const items = (rows || []).map(r => ({
+      id: r.id,
+      name: r.name,
+      imageUrl: `/uploads/${String(r.image_path).replace(/^\/+/, '')}`,
+      createdAt: r.created_at,
+    }))
+    res.setHeader('X-DB-Source', lastReadDbSource)
+    return res.json({ items, total, dbSource: lastReadDbSource, serverNumber: SERVER_NUMBER })
+  } catch (err) {
+    return res.status(500).json({ error: 'Erreur base de données' })
+  }
+})
+
+// Liste paginée avec suppression
+app.get('/api/images', async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1)
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10))
+    const offset = (page - 1) * limit
+    const { rows, total } = await selectImagesPaginated(offset, limit)
+    const items = (rows || []).map(r => ({
+      id: r.id,
+      name: r.name,
+      imageUrl: `/uploads/${String(r.image_path).replace(/^\/+/, '')}`,
+      createdAt: r.created_at,
+    }))
+    res.setHeader('X-DB-Source', lastReadDbSource)
+    return res.json({ items, total, page, limit, serverNumber: SERVER_NUMBER, dbSource: lastReadDbSource })
+  } catch (err) {
+    return res.status(500).json({ error: 'Erreur base de données' })
+  }
+})
+
+app.delete('/api/images/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    if (!id) return res.status(400).json({ error: 'ID invalide' })
+    const ok = await deleteImage(id)
+    if (!ok) return res.status(404).json({ error: 'Introuvable' })
+    return res.json({ ok: true })
+  } catch (err) {
+    return res.status(500).json({ error: 'Erreur suppression' })
   }
 })
 
@@ -246,7 +366,7 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
 
 // Route: info serveur (IP locale + numéro)
 app.get('/api/info', (req, res) => {
-  res.json({ ip: getLocalIp(), port: PORT, serverNumber: SERVER_NUMBER })
+  res.json({ ip: getLocalIp(), port: PORT, serverNumber: SERVER_NUMBER, dbSource: lastReadDbSource })
 })
 
 // Endpoint de santé pour le Load Balancer
