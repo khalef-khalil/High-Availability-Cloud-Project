@@ -62,20 +62,20 @@
   },
   "suites": [
     {
-      "title": "03-ha-load-balancing.spec.js",
-      "file": "03-ha-load-balancing.spec.js",
+      "title": "07-ui-carousel-status.spec.js",
+      "file": "07-ui-carousel-status.spec.js",
       "column": 0,
       "line": 0,
       "specs": [],
       "suites": [
         {
-          "title": "High Availability - Load Balancing",
-          "file": "03-ha-load-balancing.spec.js",
-          "line": 3,
+          "title": "Carousel & Status UI",
+          "file": "07-ui-carousel-status.spec.js",
+          "line": 4,
           "column": 6,
           "specs": [
             {
-              "title": "should connect to VIP successfully",
+              "title": "should sync carousel, gallery list and status badge",
               "ok": true,
               "tags": [],
               "tests": [
@@ -90,16 +90,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 450,
+                      "duration": 5060,
                       "errors": [],
-                      "stdout": [
-                        {
-                          "text": "✅ VIP (192.168.64.10) is accessible\n"
-                        }
-                      ],
+                      "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2025-10-20T09:47:50.087Z",
+                      "startTime": "2025-11-09T14:26:33.216Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -107,13 +103,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "e2d97faa451ae58a5559-91864f633480a7f4a41b",
-              "file": "03-ha-load-balancing.spec.js",
-              "line": 5,
+              "id": "51924abdb90f936a8f87-d43e4f3fb134e6a692e9",
+              "file": "07-ui-carousel-status.spec.js",
+              "line": 26,
               "column": 3
             },
             {
-              "title": "should distribute requests across servers",
+              "title": "should delete image and remove storage object",
               "ok": true,
               "tags": [],
               "tests": [
@@ -128,49 +124,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 10894,
+                      "duration": 2738,
                       "errors": [],
-                      "stdout": [
-                        {
-                          "text": "Request 1: Server 2\n"
-                        },
-                        {
-                          "text": "Request 2: Server 1\n"
-                        },
-                        {
-                          "text": "Request 3: Server 2\n"
-                        },
-                        {
-                          "text": "Request 4: Server 1\n"
-                        },
-                        {
-                          "text": "Request 5: Server 2\n"
-                        },
-                        {
-                          "text": "Request 6: Server 1\n"
-                        },
-                        {
-                          "text": "Request 7: Server 2\n"
-                        },
-                        {
-                          "text": "Request 8: Server 1\n"
-                        },
-                        {
-                          "text": "Request 9: Server 2\n"
-                        },
-                        {
-                          "text": "Request 10: Server 1\n"
-                        },
-                        {
-                          "text": "Servers accessed: 2, 1\n"
-                        },
-                        {
-                          "text": "✅ Load balancing confirmed: Both servers are active\n"
-                        }
-                      ],
+                      "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2025-10-20T09:47:50.808Z",
+                      "startTime": "2025-11-09T14:26:38.642Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -178,419 +137,9 @@
                   "status": "expected"
                 }
               ],
-              "id": "e2d97faa451ae58a5559-79f6e304ce5737cfd73e",
-              "file": "03-ha-load-balancing.spec.js",
-              "line": 12,
-              "column": 3
-            },
-            {
-              "title": "should show correct server identity",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 0,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 222,
-                      "errors": [],
-                      "stdout": [
-                        {
-                          "text": "Server info: { ip: \u001b[32m'192.168.64.13'\u001b[39m, port: \u001b[33m8000\u001b[39m, serverNumber: \u001b[32m'1'\u001b[39m }\n"
-                        },
-                        {
-                          "text": "✅ Connected to server #1 at 192.168.64.13:8000\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-10-20T09:48:01.710Z",
-                      "annotations": [],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "e2d97faa451ae58a5559-328f129d47f02412f96f",
-              "file": "03-ha-load-balancing.spec.js",
-              "line": 46,
-              "column": 3
-            },
-            {
-              "title": "should maintain session across requests",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 0,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 194,
-                      "errors": [],
-                      "stdout": [
-                        {
-                          "text": "First request: Server 1, Second request: Server 2\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-10-20T09:48:01.937Z",
-                      "annotations": [],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "e2d97faa451ae58a5559-df63ca55e0597825e5db",
-              "file": "03-ha-load-balancing.spec.js",
-              "line": 64,
-              "column": 3
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "title": "06-failover-simulation.spec.js",
-      "file": "06-failover-simulation.spec.js",
-      "column": 0,
-      "line": 0,
-      "specs": [],
-      "suites": [
-        {
-          "title": "HA Failover Simulation Tests",
-          "file": "06-failover-simulation.spec.js",
-          "line": 3,
-          "column": 6,
-          "specs": [
-            {
-              "title": "should detect active Keepalived VIP",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 0,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 91,
-                      "errors": [],
-                      "stdout": [
-                        {
-                          "text": "✅ Keepalived VIP (192.168.64.10) is active\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-10-20T09:48:02.145Z",
-                      "annotations": [],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84fb4e1c3ae9edc5291f-742b8708be3ba42177dd",
-              "file": "06-failover-simulation.spec.js",
-              "line": 5,
-              "column": 3
-            },
-            {
-              "title": "should access app through primary load balancer",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 0,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 99,
-                      "errors": [],
-                      "stdout": [
-                        {
-                          "text": "✅ Primary LB (192.168.64.12) is accessible\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-10-20T09:48:02.240Z",
-                      "annotations": [],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84fb4e1c3ae9edc5291f-9b832cf72a1101aac972",
-              "file": "06-failover-simulation.spec.js",
-              "line": 13,
-              "column": 3
-            },
-            {
-              "title": "should access app through backup load balancer",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 0,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 92,
-                      "errors": [],
-                      "stdout": [
-                        {
-                          "text": "✅ Backup LB (192.168.64.15) is accessible\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-10-20T09:48:02.345Z",
-                      "annotations": [],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84fb4e1c3ae9edc5291f-463138cab86e45eeecb5",
-              "file": "06-failover-simulation.spec.js",
-              "line": 24,
-              "column": 3
-            },
-            {
-              "title": "should verify both app servers are healthy",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 0,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 110,
-                      "errors": [],
-                      "stdout": [
-                        {
-                          "text": "APP1 (192.168.64.13): ✅ UP\n"
-                        },
-                        {
-                          "text": "APP2 (192.168.64.16): ✅ UP\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-10-20T09:48:02.441Z",
-                      "annotations": [],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84fb4e1c3ae9edc5291f-ea0db93d6457e4ec4f17",
-              "file": "06-failover-simulation.spec.js",
-              "line": 35,
-              "column": 3
-            },
-            {
-              "title": "should test resilience with rapid requests",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 0,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 139,
-                      "errors": [],
-                      "stdout": [
-                        {
-                          "text": "Making 20 rapid requests...\n"
-                        },
-                        {
-                          "text": "Results: 20 success, 0 failed\n"
-                        },
-                        {
-                          "text": "Servers hit: 2, 1\n"
-                        },
-                        {
-                          "text": "Success rate: 100.0%\n"
-                        },
-                        {
-                          "text": "✅ System is resilient under rapid requests\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-10-20T09:48:02.556Z",
-                      "annotations": [],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84fb4e1c3ae9edc5291f-5086581fe8e8f8b03c13",
-              "file": "06-failover-simulation.spec.js",
-              "line": 51,
-              "column": 3
-            },
-            {
-              "title": "should maintain consistency during load",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 0,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 147,
-                      "errors": [],
-                      "stdout": [
-                        {
-                          "text": "✅ Data consistency maintained across requests\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-10-20T09:48:02.700Z",
-                      "annotations": [],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84fb4e1c3ae9edc5291f-d9da6a775d6fa67dbb42",
-              "file": "06-failover-simulation.spec.js",
-              "line": 87,
-              "column": 3
-            },
-            {
-              "title": "[MANUAL] Failover test - requires manual intervention",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 0,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 85,
-                      "errors": [],
-                      "stdout": [
-                        {
-                          "text": "═══════════════════════════════════════════════════\n"
-                        },
-                        {
-                          "text": "MANUAL FAILOVER TEST\n"
-                        },
-                        {
-                          "text": "═══════════════════════════════════════════════════\n"
-                        },
-                        {
-                          "text": "\n"
-                        },
-                        {
-                          "text": "To test failover manually:\n"
-                        },
-                        {
-                          "text": "1. Stop primary LB: ssh cloud-lb@192.168.64.12 \"sudo systemctl stop haproxy\"\n"
-                        },
-                        {
-                          "text": "2. Watch VIP failover to LB2\n"
-                        },
-                        {
-                          "text": "3. Verify app still accessible via 192.168.64.10\n"
-                        },
-                        {
-                          "text": "4. Restart: ssh cloud-lb@192.168.64.12 \"sudo systemctl start haproxy\"\n"
-                        },
-                        {
-                          "text": "\n"
-                        },
-                        {
-                          "text": "Expected: <3 seconds downtime, automatic recovery\n"
-                        },
-                        {
-                          "text": "═══════════════════════════════════════════════════\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-10-20T09:48:02.850Z",
-                      "annotations": [],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84fb4e1c3ae9edc5291f-e3761ae27eea715a3d2f",
-              "file": "06-failover-simulation.spec.js",
-              "line": 114,
+              "id": "51924abdb90f936a8f87-11094b79aa9d0ee6db3c",
+              "file": "07-ui-carousel-status.spec.js",
+              "line": 68,
               "column": 3
             }
           ]
@@ -600,9 +149,9 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2025-10-20T09:47:49.607Z",
-    "duration": 13373.267,
-    "expected": 11,
+    "startTime": "2025-11-09T14:26:32.786Z",
+    "duration": 8652.591,
+    "expected": 2,
     "skipped": 0,
     "unexpected": 0,
     "flaky": 0
