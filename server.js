@@ -299,28 +299,33 @@ async function initDatabase() {
     if (!masterHostList.length) masterHostList = [MYSQL_MASTER_HOST]
     if (!slaveHostList.length) slaveHostList = masterHostList
 
-    await rebuildPool('write')
-    await rebuildPool('read')
+    const hasMaster = await rebuildPool('write')
+    const hasReader = await rebuildPool('read')
 
     // Créer la table sur le master (sera répliquée sur le slave)
-    try {
-      await withConnection('write', async (conn) => conn.query(
-        `CREATE TABLE IF NOT EXISTS images (
-          id INT AUTO_INCREMENT PRIMARY KEY,
-          name VARCHAR(255) NOT NULL,
-          image_path VARCHAR(1024) NOT NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB`
-      ))
-    } catch (err) {
-      if (isReadOnlyError(err)) {
-        console.warn('⚠️  Base de données en lecture seule, création de table ignorée')
-      } else {
-        throw err
+    if (hasMaster) {
+      try {
+        await withConnection('write', async (conn) => conn.query(
+          `CREATE TABLE IF NOT EXISTS images (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            image_path VARCHAR(1024) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          ) ENGINE=InnoDB`
+        ))
+      } catch (err) {
+        if (isReadOnlyError(err)) {
+          console.warn('⚠️  Base de données en lecture seule, création de table ignorée')
+        } else {
+          console.warn('⚠️  Impossible de créer la table sur le master:', err.message || err)
+        }
       }
+    } else {
+      console.warn('⚠️  Aucun master disponible lors de l’initialisation (mode dégradé, lecture seule)')
     }
-    
-    console.log(`✅ MySQL Read/Write Split prêt (master ${masterPoolTarget || 'inconnu'}, slave ${slavePoolTarget || masterPoolTarget || 'inconnu'})`)
+
+    const readTarget = hasReader ? slavePoolTarget : masterPoolTarget
+    console.log(`✅ MySQL Read/Write Split prêt (master ${masterPoolTarget || 'indisponible'}, slave ${readTarget || 'indisponible'})`)
   } else {
     // SQLite: crée le fichier et la table si nécessaire
     sqliteDb = new sqlite3.Database(DB_PATH)
@@ -383,8 +388,8 @@ async function selectLatestImage() {
       })
       return rows[0] || null
     } catch (err) {
-      console.warn('⚠️  Slave DB down, using master for reads')
-      const rows = await withConnection('read', async (conn) => {
+      console.warn('⚠️  Source lecture indisponible, bascule temporaire sur le writer')
+      const rows = await withConnection('write', async (conn) => {
         const [result] = await conn.query(
           'SELECT id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT 1'
         )
@@ -417,8 +422,8 @@ async function selectImagesPaginated(offset, limit) {
         return { rows, total: Number(totalRows?.[0]?.total || 0) }
       })
     } catch (err) {
-      console.warn('⚠️  Slave DB down, using master for reads (paginated)')
-      return await withConnection('read', async (conn) => {
+      console.warn('⚠️  Source lecture indisponible, bascule sur le writer (paginated)')
+      return await withConnection('write', async (conn) => {
         const [rows] = await conn.query(
           'SELECT SQL_CALC_FOUND_ROWS id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
           [Number(limit), Number(offset)]

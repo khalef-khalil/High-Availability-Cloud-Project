@@ -25,14 +25,31 @@
   "InstancePollSeconds": 5,
   "UnseenInstanceForgetHours": 6,
   "ReasonableReplicationLagSeconds": 5,
-  "RecoveryPeriodBlockSeconds": 60,
+  "RecoveryPeriodBlockSeconds": 10,
   "FailureDetectionPeriodBlockSeconds": 5,
+  "MySQLDiscoveryReadTimeout": 1,
+  "MySQLTopoReadTimeout": 1,
+  "MySQLDowntimeAfterMasterFailover": 0,
   "UseSuperReadOnly": true,
   "ApplyMySQLPromotionAfterMasterFailover": true,
   "MasterFailoverAvailableWhenReadOnly": true,
   "MasterFailoverLostInstancesDowntimeSeconds": 0,
+  "DelayMasterPromotionIfSQLThreadNotUpToDate": false,
+  "FailMasterPromotionIfSQLThreadNotUpToDate": false,
+  "MasterFailoverCheckStaleBinlogCoordinates": false,
+  "AutoMasterRecovery": true,
+  "AutoIntermediateMasterRecovery": true,
   "RecoverMasterClusterFilters": [
-    ".*"
+    "cloud-mdb:3306"
+  ],
+  "PostMasterFailoverProcesses": [
+    "/usr/local/bin/orchestrator-proxysql-hook.sh --event=post-master-failover --new-master={{.SuccessorKey.Hostname}}:{{.SuccessorKey.Port}} --old-master={{.FailedKey.Hostname}}:{{.FailedKey.Port}} --cluster={{.ClusterName}}"
+  ],
+  "PostIntermediateMasterFailoverProcesses": [
+    "/usr/local/bin/orchestrator-proxysql-hook.sh --event=post-intermediate-failover --new-master={{.SuccessorKey.Hostname}}:{{.SuccessorKey.Port}} --old-master={{.FailedKey.Hostname}}:{{.FailedKey.Port}} --cluster={{.ClusterName}}"
+  ],
+  "PostGracefulTakeoverProcesses": [
+    "/usr/local/bin/orchestrator-proxysql-hook.sh --event=post-graceful-takeover --new-master={{.SuccessorKey.Hostname}}:{{.SuccessorKey.Port}} --old-master={{.FailedKey.Hostname}}:{{.FailedKey.Port}} --cluster={{.ClusterName}}"
   ],
   "CommandRunTimeoutSeconds": 30,
   "BackendMySQLHost": "",

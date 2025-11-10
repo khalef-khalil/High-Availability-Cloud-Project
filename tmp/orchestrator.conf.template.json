@@ -12,8 +12,8 @@
   "BackendDB": "sqlite",
   "SQLite3DataFile": "/var/lib/orchestrator/orchestrator.db",
   "RaftEnabled": true,
-  "RaftBind": "192.168.64.15:10008",
-  "RaftAdvertise": "192.168.64.15:10008",
+  "RaftBind": "__RAFT_BIND__",
+  "RaftAdvertise": "__RAFT_ADVERTISE__",
   "RaftNodes": [
     "192.168.64.12:10008",
     "192.168.64.15:10008",
