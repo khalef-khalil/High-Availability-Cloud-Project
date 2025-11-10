@@ -1,0 +1,40 @@
+{
+  "Debug": false,
+  "EnableSyslog": true,
+  "ListenAddress": ":3000",
+  "AuthenticationMethod": "basic",
+  "HTTPAuthUser": "admin",
+  "HTTPAuthPassword": "adminPass!2024",
+  "MySQLTopologyUser": "orchestrator",
+  "MySQLTopologyPassword": "orchPass!2024",
+  "MySQLOrchestratorUser": "orchestrator",
+  "MySQLOrchestratorPassword": "orchPass!2024",
+  "BackendDB": "sqlite",
+  "SQLite3DataFile": "/var/lib/orchestrator/orchestrator.db",
+  "RaftEnabled": true,
+  "RaftBind": "192.168.64.12:10008",
+  "RaftAdvertise": "192.168.64.12:10008",
+  "RaftNodes": [
+    "192.168.64.12:10008",
+    "192.168.64.15:10008",
+    "192.168.64.13:10008"
+  ],
+  "RaftDataDir": "/var/lib/orchestrator",
+  "DefaultInstancePort": 3306,
+  "DiscoverByShowSlaveHosts": true,
+  "InstancePollSeconds": 5,
+  "UnseenInstanceForgetHours": 6,
+  "ReasonableReplicationLagSeconds": 5,
+  "RecoveryPeriodBlockSeconds": 60,
+  "FailureDetectionPeriodBlockSeconds": 5,
+  "UseSuperReadOnly": true,
+  "ApplyMySQLPromotionAfterMasterFailover": true,
+  "MasterFailoverAvailableWhenReadOnly": true,
+  "MasterFailoverLostInstancesDowntimeSeconds": 0,
+  "RecoverMasterClusterFilters": [
+    ".*"
+  ],
+  "CommandRunTimeoutSeconds": 30,
+  "BackendMySQLHost": "",
+  "BackendMySQLPort": 0
+}

@@ -78,6 +78,7 @@ Logs of the failback agent live in `/var/log/orchestrator-failback.log` on LB1.
 | `.env` | Runtime configuration consumed by both app instances |
 | `public/` | Static assets served by the Node application |
 | `tests/` | Playwright UI tests validating carousel, deletion, and status behaviour |
+| `scripts/setup-time-sync.sh` | Installs chrony and aligns VM clocks (run on every node) |
 
 ## Notes
 - All automation assumes passwordless SSH between orchestrator nodes for Orchestrator RAFT health and the failback agent.
