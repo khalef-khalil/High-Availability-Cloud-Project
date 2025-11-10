@@ -27,6 +27,8 @@ const DB_PATH = path.join(DATA_DIR, 'app.db')
 const DB_DRIVER = (process.env.DB_DRIVER || 'sqlite').toLowerCase()
 const MYSQL_MASTER_HOST = process.env.MYSQL_MASTER_HOST || process.env.MYSQL_HOST || '127.0.0.1'
 const MYSQL_SLAVE_HOST = process.env.MYSQL_SLAVE_HOST || process.env.MYSQL_HOST || '127.0.0.1'
+const MYSQL_MASTER_HOSTS = process.env.MYSQL_MASTER_HOSTS || ''
+const MYSQL_SLAVE_HOSTS = process.env.MYSQL_SLAVE_HOSTS || ''
 const MYSQL_MASTER_PORT = process.env.MYSQL_MASTER_PORT ? Number(process.env.MYSQL_MASTER_PORT) : (process.env.MYSQL_PORT ? Number(process.env.MYSQL_PORT) : 3306)
 const MYSQL_SLAVE_PORT = process.env.MYSQL_SLAVE_PORT ? Number(process.env.MYSQL_SLAVE_PORT) : (process.env.MYSQL_PORT ? Number(process.env.MYSQL_PORT) : 3306)
 const MYSQL_USER = process.env.MYSQL_USER || 'root'
@@ -51,17 +53,17 @@ sqlite3.verbose()
 let sqliteDb = null
 let mysqlMasterPool = null  // Pour les écritures (INSERT, UPDATE, DELETE)
 let mysqlSlavePool = null   // Pour les lectures (SELECT)
+let masterHostList = []
+let slaveHostList = []
+let masterPoolTarget = ''
+let slavePoolTarget = ''
 let lastReadDbSource = 'sqlite@local'
 let currentWriteDb = 'sqlite@local'
 
-// Client MinIO pour le stockage objet
-const minioClient = new MinioClient({
-  endPoint: MINIO_ENDPOINT,
-  port: MINIO_PORT,
-  useSSL: MINIO_USE_SSL,
-  accessKey: MINIO_ACCESS_KEY,
-  secretKey: MINIO_SECRET_KEY,
-})
+// Client MinIO pour le stockage objet (initialisé après parsing des hôtes)
+let minioClient = null
+let minioTargets = []
+let activeMinioIndex = 0
 
 function describeMysqlTarget(conn) {
   const cfg = conn.connection?.config || conn.config || {}
@@ -71,55 +73,254 @@ function describeMysqlTarget(conn) {
   return `${host}${port}${thread}`
 }
 
-async function withConnection(pool, role, task) {
-  const conn = await pool.getConnection()
-  try {
-    const result = await task(conn)
-    const descriptor = describeMysqlTarget(conn)
-    if (role === 'read') {
-      lastReadDbSource = `read:${descriptor}`
-    } else if (role === 'write') {
-      currentWriteDb = `write:${descriptor}`
+function parseHostList(raw, fallback) {
+  const parts = String(raw || '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (parts.length) return parts
+  return fallback ? [fallback] : []
+}
+
+function isConnectionError(err) {
+  if (!err) return false
+  const codes = new Set(['PROTOCOL_CONNECTION_LOST', 'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ENETUNREACH', 'EHOSTUNREACH', 'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR'])
+  return codes.has(err.code) || err.fatal === true
+}
+
+function isReadOnlyError(err) {
+  if (!err) return false
+  if (err.code === 'ER_OPTION_PREVENTS_STATEMENT' || err.errno === 1290) return true
+  const message = String(err.sqlMessage || err.message || '').toLowerCase()
+  return message.includes('read-only')
+}
+
+function parseMinioTargetList(raw) {
+  const list = parseHostList(raw, MINIO_ENDPOINT)
+  return list.map((entry) => {
+    const [host, portStr] = entry.split(':')
+    const port = portStr ? Number(portStr) : MINIO_PORT
+    return { host, port }
+  })
+}
+
+function createMinioClientForTarget(target) {
+  console.log(`🔁 Connexion MinIO vers ${target.host}:${target.port}`)
+  return new MinioClient({
+    endPoint: target.host,
+    port: target.port,
+    useSSL: MINIO_USE_SSL,
+    accessKey: MINIO_ACCESS_KEY,
+    secretKey: MINIO_SECRET_KEY,
+  })
+}
+
+function isStorageConnectionError(err) {
+  if (!err) return false
+  const codes = new Set(['ECONNRESET', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ETIMEDOUT'])
+  if (codes.has(err.code)) return true
+  const message = String(err.message || '').toLowerCase()
+  return message.includes('connect') && message.includes('refused')
+}
+
+async function withMinio(task) {
+  if (!minioTargets.length) {
+    minioTargets = parseMinioTargetList(process.env.MINIO_ENDPOINTS || '')
+    if (!minioTargets.length) {
+      minioTargets = [{ host: MINIO_ENDPOINT, port: MINIO_PORT }]
     }
-    return result
-  } finally {
-    conn.release()
   }
+
+  let lastError = null
+  for (let attempt = 0; attempt < minioTargets.length; attempt++) {
+    const index = (activeMinioIndex + attempt) % minioTargets.length
+    const target = minioTargets[index]
+    if (!minioClient || index !== activeMinioIndex) {
+      try {
+        minioClient = createMinioClientForTarget(target)
+      } catch (err) {
+        lastError = err
+        continue
+      }
+    }
+    try {
+      const result = await task(minioClient, target)
+      activeMinioIndex = index
+      if (attempt > 0) {
+        console.log(`✅ MinIO basculé sur ${target.host}:${target.port}`)
+      }
+      return result
+    } catch (err) {
+      lastError = err
+      if (isStorageConnectionError(err) && attempt + 1 < minioTargets.length) {
+        console.warn(`⚠️  MinIO ${target.host}:${target.port} indisponible (${err.code || err.message}), tentative suivante...`)
+        continue
+      }
+      throw err
+    }
+  }
+  if (lastError) throw lastError
+  throw new Error('MinIO indisponible')
+}
+
+minioTargets = parseMinioTargetList(process.env.MINIO_ENDPOINTS || '')
+if (!minioTargets.length) {
+  minioTargets = [{ host: MINIO_ENDPOINT, port: MINIO_PORT }]
+}
+minioClient = createMinioClientForTarget(minioTargets[activeMinioIndex])
+console.log(`✅ MinIO prêt (${minioTargets[activeMinioIndex].host}:${minioTargets[activeMinioIndex].port}/${MINIO_BUCKET})`)
+
+async function closePool(pool) {
+  if (!pool) return
+  try {
+    await pool.end()
+  } catch {}
+}
+
+async function createPoolForHost(host, port, label) {
+  const pool = mysql.createPool({
+    host,
+    port,
+    user: MYSQL_USER,
+    password: MYSQL_PASSWORD,
+    database: MYSQL_DATABASE,
+    connectionLimit: label === 'read' ? 10 : 5,
+    waitForConnections: true,
+    connectTimeout: 5000,
+  })
+  try {
+    await pool.query('SELECT 1')
+    return pool
+  } catch (err) {
+    await closePool(pool)
+    throw err
+  }
+}
+
+async function rebuildPool(role) {
+  if (role === 'write') {
+    const hosts = [...masterHostList, ...slaveHostList.filter((h) => !masterHostList.includes(h))]
+    const errors = []
+    for (const host of hosts) {
+      try {
+        console.log(`🔁 Tentative pool master -> ${host}:${MYSQL_MASTER_PORT}`)
+        const pool = await createPoolForHost(host, MYSQL_MASTER_PORT, 'write')
+        await closePool(mysqlMasterPool)
+        mysqlMasterPool = pool
+        masterPoolTarget = `${host}:${MYSQL_MASTER_PORT}`
+        console.log(`✅ Pool MySQL (master) connecté à ${masterPoolTarget}`)
+        return true
+      } catch (err) {
+        console.warn(`❌ Échec connexion master ${host}:${MYSQL_MASTER_PORT} (${err?.code || err?.message || err})`)
+        errors.push({ host, err: err?.message || err })
+      }
+    }
+    console.error('❌ Impossible de connecter le pool master', errors)
+    return false
+  } else {
+    const hosts = slaveHostList.length ? slaveHostList : masterHostList
+    const errors = []
+    for (const host of hosts) {
+      try {
+        console.log(`🔁 Tentative pool slave -> ${host}:${MYSQL_SLAVE_PORT}`)
+        const pool = await createPoolForHost(host, MYSQL_SLAVE_PORT, 'read')
+        await closePool(mysqlSlavePool)
+        mysqlSlavePool = pool
+        slavePoolTarget = `${host}:${MYSQL_SLAVE_PORT}`
+        console.log(`✅ Pool MySQL (slave) connecté à ${slavePoolTarget}`)
+        return true
+      } catch (err) {
+        console.warn(`❌ Échec connexion slave ${host}:${MYSQL_SLAVE_PORT} (${err?.code || err?.message || err})`)
+        errors.push({ host, err: err?.message || err })
+      }
+    }
+    console.warn('⚠️  Aucun pool slave disponible, utilisation du master pour les lectures', errors)
+    await closePool(mysqlSlavePool)
+    mysqlSlavePool = null
+    slavePoolTarget = ''
+    return false
+  }
+}
+
+async function getPoolForRole(role) {
+  if (role === 'write') {
+    if (!mysqlMasterPool) {
+      await rebuildPool('write')
+    }
+    return mysqlMasterPool
+  }
+  if (!mysqlSlavePool) {
+    await rebuildPool('read')
+  }
+  return mysqlSlavePool || mysqlMasterPool
+}
+
+async function withConnection(role, task) {
+  if (DB_DRIVER !== 'mysql') throw new Error('withConnection ne doit être utilisé qu’avec MySQL')
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const pool = await getPoolForRole(role)
+    if (!pool) break
+    let conn = null
+    try {
+      conn = await pool.getConnection()
+      const result = await task(conn)
+      const descriptor = describeMysqlTarget(conn)
+      if (role === 'read') {
+        lastReadDbSource = `read:${descriptor}`
+      } else if (role === 'write') {
+        currentWriteDb = `write:${descriptor}`
+      }
+      return result
+    } catch (err) {
+      if (isConnectionError(err)) {
+        console.warn(`⚠️  Connexion ${role} perdue (${err.code || err.message}), tentative de reconnexion...`)
+        if (conn) {
+          try { conn.release() } catch {}
+        }
+        if (await rebuildPool(role)) {
+          continue
+        }
+      }
+      throw err
+    } finally {
+      if (conn) {
+        try { conn.release() } catch {}
+      }
+    }
+  }
+  throw new Error(`Impossible d'obtenir une connexion ${role}`)
 }
 
 async function initDatabase() {
   if (DB_DRIVER === 'mysql') {
-    // MySQL Master: pool pour les opérations d'écriture
-    mysqlMasterPool = await mysql.createPool({
-      host: MYSQL_MASTER_HOST,
-      port: MYSQL_MASTER_PORT,
-      user: MYSQL_USER,
-      password: MYSQL_PASSWORD,
-      database: MYSQL_DATABASE,
-      connectionLimit: 5,
-    })
-    
-    // MySQL Slave: pool pour les opérations de lecture
-    mysqlSlavePool = await mysql.createPool({
-      host: MYSQL_SLAVE_HOST,
-      port: MYSQL_SLAVE_PORT,
-      user: MYSQL_USER,
-      password: MYSQL_PASSWORD,
-      database: MYSQL_DATABASE,
-      connectionLimit: 10,  // Plus de connexions pour les lectures
-    })
-    
+    masterHostList = parseHostList(MYSQL_MASTER_HOSTS, MYSQL_MASTER_HOST)
+    slaveHostList = parseHostList(MYSQL_SLAVE_HOSTS, MYSQL_SLAVE_HOST)
+
+    if (!masterHostList.length) masterHostList = [MYSQL_MASTER_HOST]
+    if (!slaveHostList.length) slaveHostList = masterHostList
+
+    await rebuildPool('write')
+    await rebuildPool('read')
+
     // Créer la table sur le master (sera répliquée sur le slave)
-    await mysqlMasterPool.query(
-      `CREATE TABLE IF NOT EXISTS images (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        image_path VARCHAR(1024) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB`
-    )
+    try {
+      await withConnection('write', async (conn) => conn.query(
+        `CREATE TABLE IF NOT EXISTS images (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          image_path VARCHAR(1024) NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB`
+      ))
+    } catch (err) {
+      if (isReadOnlyError(err)) {
+        console.warn('⚠️  Base de données en lecture seule, création de table ignorée')
+      } else {
+        throw err
+      }
+    }
     
-    console.log(`✅ MySQL Read/Write Split: Master=${MYSQL_MASTER_HOST}:${MYSQL_MASTER_PORT}, Slave=${MYSQL_SLAVE_HOST}:${MYSQL_SLAVE_PORT}`)
+    console.log(`✅ MySQL Read/Write Split prêt (master ${masterPoolTarget || 'inconnu'}, slave ${slavePoolTarget || masterPoolTarget || 'inconnu'})`)
   } else {
     // SQLite: crée le fichier et la table si nécessaire
     sqliteDb = new sqlite3.Database(DB_PATH)
@@ -138,14 +339,24 @@ async function initDatabase() {
 
 async function insertImageRecord(name, relativePath) {
   if (DB_DRIVER === 'mysql') {
-    const execResult = await withConnection(mysqlMasterPool, 'write', async (conn) => {
-      const [result] = await conn.execute(
-        'INSERT INTO images (name, image_path) VALUES (?, ?)',
-        [name, relativePath]
-      )
-      return result
-    })
-    return Number(execResult.insertId)
+    try {
+      const execResult = await withConnection('write', async (conn) => {
+        const [result] = await conn.execute(
+          'INSERT INTO images (name, image_path) VALUES (?, ?)',
+          [name, relativePath]
+        )
+        return result
+      })
+      return Number(execResult.insertId)
+    } catch (err) {
+      if (isReadOnlyError(err)) {
+        const readOnlyError = new Error('MySQL server is read-only')
+        readOnlyError.code = 'READ_ONLY_DB'
+        readOnlyError.cause = err
+        throw readOnlyError
+      }
+      throw err
+    }
   }
   currentWriteDb = 'write:sqlite@local'
   return await new Promise((resolve, reject) => {
@@ -164,7 +375,7 @@ async function insertImageRecord(name, relativePath) {
 async function selectLatestImage() {
   if (DB_DRIVER === 'mysql') {
     try {
-      const rows = await withConnection(mysqlSlavePool, 'read', async (conn) => {
+      const rows = await withConnection('read', async (conn) => {
         const [result] = await conn.query(
           'SELECT id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT 1'
         )
@@ -173,7 +384,7 @@ async function selectLatestImage() {
       return rows[0] || null
     } catch (err) {
       console.warn('⚠️  Slave DB down, using master for reads')
-      const rows = await withConnection(mysqlMasterPool, 'read', async (conn) => {
+      const rows = await withConnection('read', async (conn) => {
         const [result] = await conn.query(
           'SELECT id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT 1'
         )
@@ -197,7 +408,7 @@ async function selectLatestImage() {
 async function selectImagesPaginated(offset, limit) {
   if (DB_DRIVER === 'mysql') {
     try {
-      return await withConnection(mysqlSlavePool, 'read', async (conn) => {
+      return await withConnection('read', async (conn) => {
         const [rows] = await conn.query(
           'SELECT SQL_CALC_FOUND_ROWS id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
           [Number(limit), Number(offset)]
@@ -207,7 +418,7 @@ async function selectImagesPaginated(offset, limit) {
       })
     } catch (err) {
       console.warn('⚠️  Slave DB down, using master for reads (paginated)')
-      return await withConnection(mysqlMasterPool, 'read', async (conn) => {
+      return await withConnection('read', async (conn) => {
         const [rows] = await conn.query(
           'SELECT SQL_CALC_FOUND_ROWS id, name, image_path, created_at FROM images ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
           [Number(limit), Number(offset)]
@@ -236,21 +447,31 @@ async function selectImagesPaginated(offset, limit) {
 
 async function deleteImage(id) {
   if (DB_DRIVER === 'mysql') {
-    return await withConnection(mysqlMasterPool, 'write', async (conn) => {
-      const [rows] = await conn.query('SELECT image_path FROM images WHERE id = ?', [id])
-      const fileName = rows?.[0]?.image_path
-      if (!fileName) return false
-      const objectName = String(fileName)
-      try {
-        await minioClient.removeObject(MINIO_BUCKET, objectName)
-      } catch (err) {
-        if (err?.code !== 'NoSuchKey') {
-          throw err
+    try {
+      return await withConnection('write', async (conn) => {
+        const [rows] = await conn.query('SELECT image_path FROM images WHERE id = ?', [id])
+        const fileName = rows?.[0]?.image_path
+        if (!fileName) return false
+        const objectName = String(fileName)
+        try {
+          await withMinio((client) => client.removeObject(MINIO_BUCKET, objectName))
+        } catch (err) {
+          if (err?.code !== 'NoSuchKey') {
+            throw err
+          }
         }
+        await conn.query('DELETE FROM images WHERE id = ?', [id])
+        return true
+      })
+    } catch (err) {
+      if (isReadOnlyError(err)) {
+        const readOnlyError = new Error('MySQL server is read-only')
+        readOnlyError.code = 'READ_ONLY_DB'
+        readOnlyError.cause = err
+        throw readOnlyError
       }
-      await conn.query('DELETE FROM images WHERE id = ?', [id])
-      return true
-    })
+      throw err
+    }
   }
   return await new Promise((resolve, reject) => {
     sqliteDb.get('SELECT image_path FROM images WHERE id = ?', [id], async (err, row) => {
@@ -258,7 +479,7 @@ async function deleteImage(id) {
       if (!row) return resolve(false)
       const objectName = String(row.image_path)
       try {
-        await minioClient.removeObject(MINIO_BUCKET, objectName)
+        await withMinio((client) => client.removeObject(MINIO_BUCKET, objectName))
       } catch (errRemove) {
         if (errRemove?.code && errRemove.code !== 'NoSuchKey') {
           return reject(errRemove)
@@ -287,7 +508,7 @@ app.use((req, res, next) => {
 app.get('/uploads/:filename', async (req, res) => {
   try {
     const fileName = req.params.filename
-    const dataStream = await minioClient.getObject(MINIO_BUCKET, fileName)
+    const dataStream = await withMinio((client) => client.getObject(MINIO_BUCKET, fileName))
     dataStream.pipe(res)
   } catch (err) {
     console.error('Erreur récupération MinIO:', err)
@@ -374,6 +595,9 @@ app.delete('/api/images/:id', async (req, res) => {
     if (!ok) return res.status(404).json({ error: 'Introuvable' })
     return res.json({ ok: true })
   } catch (err) {
+    if (err?.code === 'READ_ONLY_DB') {
+      return res.status(503).json({ error: 'Lecture seule: suppression impossible' })
+    }
     return res.status(500).json({ error: 'Erreur suppression' })
   }
 })
@@ -393,12 +617,14 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
     const fileName = `${time}-${safeOriginal}`
     
     // Upload vers MinIO
-    await minioClient.putObject(
-      MINIO_BUCKET,
-      fileName,
-      file.buffer,
-      file.size,
-      { 'Content-Type': file.mimetype }
+    await withMinio((client) =>
+      client.putObject(
+        MINIO_BUCKET,
+        fileName,
+        file.buffer,
+        file.size,
+        { 'Content-Type': file.mimetype }
+      )
     )
     
     // Stocker le nom du fichier dans la BDD
@@ -408,6 +634,9 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
     return res.status(201).json({ id, name, imageUrl })
   } catch (err) {
     console.error('Erreur upload MinIO:', err)
+    if (err?.code === 'READ_ONLY_DB') {
+      return res.status(503).json({ error: 'Serveur en lecture seule, impossible de créer de nouveaux enregistrements' })
+    }
     return res.status(500).json({ error: 'Erreur upload fichier' })
   }
 })
@@ -422,10 +651,10 @@ app.get('/health', async (req, res) => {
   try {
     if (DB_DRIVER === 'mysql' && mysqlMasterPool) {
       // Vérifie le master (critique) et le slave (optionnel)
-      await mysqlMasterPool.query('SELECT 1')
+      await withConnection('write', async (conn) => conn.query('SELECT 1'))
       // Le slave est optionnel pour la santé, mais on log si down
       try {
-        await mysqlSlavePool.query('SELECT 1')
+        await withConnection('read', async (conn) => conn.query('SELECT 1'))
       } catch (err) {
         console.warn('⚠️  Slave DB unreachable, falling back to master for reads')
       }
@@ -441,7 +670,8 @@ app.listen(PORT, () => {
   const ip = getLocalIp()
   // Affiche l'IP LAN et le numéro du serveur pour les tests
   console.log(`Serveur démarré sur http://${ip}:${PORT} (serveur #${SERVER_NUMBER}, DB=${DB_DRIVER})`)
-  console.log(`📦 Stockage: MinIO (${MINIO_ENDPOINT}:${MINIO_PORT}/${MINIO_BUCKET})`)
+  const activeTarget = minioTargets[activeMinioIndex] || { host: MINIO_ENDPOINT, port: MINIO_PORT }
+  console.log(`📦 Stockage: MinIO (${activeTarget.host}:${activeTarget.port}/${MINIO_BUCKET})`)
 })
 
 // Utilitaire: IP locale (LAN)
